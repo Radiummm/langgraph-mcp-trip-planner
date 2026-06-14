@@ -9,9 +9,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-import psycopg
-from langchain_openai import OpenAIEmbeddings
-from sentence_transformers import SentenceTransformer
+try:
+    import psycopg
+except ImportError:
+    psycopg = None
+
+try:
+    from langchain_openai import OpenAIEmbeddings
+except ImportError:
+    OpenAIEmbeddings = None
+
+try:
+    from sentence_transformers import SentenceTransformer
+except ImportError:
+    SentenceTransformer = None
 
 from ..config import get_settings
 
@@ -59,6 +70,8 @@ class TravelRAGService:
 
     @property
     def enabled(self) -> bool:
+        if psycopg is None:
+            return False
         if not self.settings.database_url:
             return False
         if self.embedding_provider in {"local_hash", "sentence_transformer"}:

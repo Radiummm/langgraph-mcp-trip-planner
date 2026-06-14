@@ -411,7 +411,8 @@ async def get_trip_planner_agent() -> LangGraphTripPlanner:
     global _planner_instance
 
     if not _planner_instance:
-        _planner_instance = LangGraphTripPlanner()
-        await _planner_instance.initialize_tools()
+        instance = LangGraphTripPlanner()
+        await instance.initialize_tools()
+        _planner_instance = instance
 
     return _planner_instance

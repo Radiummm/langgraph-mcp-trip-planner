@@ -1,0 +1,17 @@
+[Unit]
+Description=Trip Planner Backend (FastAPI + LangGraph)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/trip-planner/backend
+EnvironmentFile=/opt/trip-planner/backend/.env
+ExecStart=/opt/trip-planner/backend/.venv/bin/uvicorn app.api.main:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
