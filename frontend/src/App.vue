@@ -16,10 +16,50 @@
 </script>
 
 <style>
+:root {
+  --font-sans-cn: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  --font-serif-cn: "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC", serif;
+  --ink: #20262c;
+  --paper: #fbfaf6;
+  --canvas: #ece8df;
+  --line: #d5cbbb;
+  --accent: #8a5a2b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: var(--font-sans-cn);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: var(--canvas);
+}
+
+body,
+button,
+input,
+textarea,
+select,
+.ant-app,
+.ant-layout,
+.ant-btn,
+.ant-input,
+.ant-select,
+.ant-picker,
+.ant-menu,
+.ant-card {
+  font-family: var(--font-sans-cn) !important;
+}
+
 #app {
-  font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
-    'Noto Sans', sans-serif;
-  color: #111827;
+  color: var(--ink);
 }
 
 .app-layout {
@@ -41,7 +81,8 @@
 .brand {
   color: #111827;
   font-size: 17px;
-  font-weight: 750;
+  font-weight: 700;
+  letter-spacing: 0.06em;
 }
 
 .header-meta {

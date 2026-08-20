@@ -69,7 +69,7 @@
               <h2>偏好与约束</h2>
             </div>
             <a-row :gutter="14">
-              <a-col :xs="24" :md="8">
+              <a-col :xs="24" :md="7">
                 <a-form-item name="transportation">
                   <template #label><span class="form-label">交通方式</span></template>
                   <a-select v-model:value="formData.transportation" size="large" class="field">
@@ -80,7 +80,7 @@
                   </a-select>
                 </a-form-item>
               </a-col>
-              <a-col :xs="24" :md="8">
+              <a-col :xs="24" :md="7">
                 <a-form-item name="accommodation">
                   <template #label><span class="form-label">住宿类型</span></template>
                   <a-select v-model:value="formData.accommodation" size="large" class="field">
@@ -91,7 +91,7 @@
                   </a-select>
                 </a-form-item>
               </a-col>
-              <a-col :xs="24" :md="8">
+              <a-col :xs="24" :md="10">
                 <a-form-item name="preferences">
                   <template #label><span class="form-label">主题偏好</span></template>
                   <a-checkbox-group v-model:value="formData.preferences" class="preference-grid">
@@ -307,9 +307,9 @@ const handleSubmit = async () => {
 .page-title {
   margin: 0;
   color: #1f2933;
-  font-family: Georgia, 'Times New Roman', serif;
+  font-family: var(--font-serif-cn);
   font-size: 42px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.08;
 }
 
@@ -436,11 +436,21 @@ const handleSubmit = async () => {
 }
 
 .preference-grid :deep(.ant-checkbox-wrapper) {
+  display: flex;
+  align-items: center;
+  min-width: 0;
   margin: 0;
-  padding: 7px 8px;
+  padding: 7px 5px;
   border: 1px solid #d6cabb;
   background: #ffffff;
-  font-size: 13px;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: nowrap;
+}
+
+.preference-grid :deep(.ant-checkbox + span) {
+  min-width: 0;
+  padding-inline: 6px 0;
 }
 
 .submit-strip {
@@ -514,6 +524,29 @@ const handleSubmit = async () => {
   .submit-strip {
     align-items: stretch;
     flex-direction: column;
+  }
+}
+
+@media (max-width: 560px) {
+  .home-container {
+    padding: 10px;
+  }
+
+  .intake-panel,
+  .intake-sidebar {
+    padding: 20px;
+  }
+
+  .page-title {
+    font-size: 34px;
+  }
+
+  .form-block {
+    padding: 18px 16px 10px;
+  }
+
+  .preference-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>

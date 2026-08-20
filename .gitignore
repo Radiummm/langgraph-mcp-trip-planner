@@ -42,6 +42,15 @@ Thumbs.db
 *.jpeg
 *.gif
 
+# Local deployment state and private documents
+.wrangler/
+*.pdf
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+
 # Logs
 *.log
-

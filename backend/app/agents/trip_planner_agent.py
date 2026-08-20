@@ -10,8 +10,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from ..services.llm_service import get_llm
 from ..services.amap_service import get_amap_tools, get_tool_map_sync
 from ..services.rag_service import get_rag_service
-from ..models.schemas import TripRequest, TripPlan, DayPlan, Attraction, Meal, Location
+from ..models.schemas import TripRequest, TripPlan
 from ..config import get_settings
+from .travel_skills import build_skill_context
 
 _planner_instance: Optional["LangGraphTripPlanner"] = None
 
@@ -138,7 +139,10 @@ class TripPlannerState(TypedDict):
     attraction_results:str
     weather_results:str
     hotel_results:str
+    planner_context: str
     trip_plan: Optional[dict]
+    validation_errors: list[str]
+    repair_attempted: bool
     error:Optional[str]
 
 class LangGraphTripPlanner:
@@ -198,14 +202,24 @@ class LangGraphTripPlanner:
         workflow.add_node("search_attractions", self._attraction_node)
         workflow.add_node("query_weather", self._weather_node)
         workflow.add_node("search_hotels", self._hotel_node)
+        workflow.add_node("build_planner_context", self._context_builder_node)
         workflow.add_node("plan_itinerary", self._planner_node)
+        workflow.add_node("validate_itinerary", self._validator_node)
+        workflow.add_node("repair_itinerary", self._repair_node)
 
         workflow.add_edge(START, "retrieve_knowledge")
         workflow.add_edge("retrieve_knowledge", "search_attractions")
         workflow.add_edge("search_attractions", "query_weather")
         workflow.add_edge("query_weather", "search_hotels")
-        workflow.add_edge("search_hotels", "plan_itinerary")
-        workflow.add_edge("plan_itinerary", END)
+        workflow.add_edge("search_hotels", "build_planner_context")
+        workflow.add_edge("build_planner_context", "plan_itinerary")
+        workflow.add_edge("plan_itinerary", "validate_itinerary")
+        workflow.add_conditional_edges(
+            "validate_itinerary",
+            self._route_after_validation,
+            {"repair": "repair_itinerary", "end": END},
+        )
+        workflow.add_edge("repair_itinerary", "validate_itinerary")
 
         return workflow.compile()
 
@@ -217,13 +231,18 @@ class LangGraphTripPlanner:
                 "attraction_results": "",
                 "weather_results": "",
                 "hotel_results": "",
+                "planner_context": "",
                 "trip_plan": None,
+                "validation_errors": [],
+                "repair_attempted": False,
                 "error": None,
             }
         )
         trip_plan = result.get("trip_plan")
         if not trip_plan:
-            return self._create_fallback_plan(request)
+            raise ValueError("旅行计划生成失败：模型未返回可解析的行程JSON")
+        if result.get("validation_errors"):
+            raise ValueError(f"旅行计划校验失败：{'; '.join(result['validation_errors'])}")
         return TripPlan(**trip_plan)
 
     async def _rag_node(self, state: TripPlannerState) -> dict:
@@ -250,7 +269,7 @@ class LangGraphTripPlanner:
     
     async def _attraction_node(self, state: TripPlannerState) -> dict:
         request=state["request"]
-        keywords=request.preferences[0] if request.preferences else "景点"
+        keywords=" ".join(request.preferences) if request.preferences else "景点"
         query = f"请搜索{request.city}的{keywords}相关景点，返回详细的景点信息。"
         print(f"📍 节点1-搜索景点: {query}")
         result = await self._attraction_agent.ainvoke({
@@ -287,6 +306,28 @@ class LangGraphTripPlanner:
         print(f"   结果: {response[:200]}...")
         return {"hotel_results": response}
 
+    async def _context_builder_node(self, state: TripPlannerState) -> dict:
+        """节点4: 裁剪并组装给Planner的上下文。"""
+        print("🧩 节点4-构建Planner上下文")
+        skill_context = build_skill_context(state["request"])
+        # ponytail: 字符数裁剪足够面试demo；如果真实流量上来，再换token级裁剪和结构化POI列表。
+        context = f"""**RAG摘要:**
+{self._trim(state["rag_context"], 1200) or "无"}
+
+**旅行Skills:**
+{skill_context}
+
+**景点候选摘要:**
+{self._trim(state["attraction_results"], 2000) or "无"}
+
+**天气摘要:**
+{self._trim(state["weather_results"], 800) or "无"}
+
+**酒店候选摘要:**
+{self._trim(state["hotel_results"], 1200) or "无"}
+"""
+        return {"planner_context": context}
+
     async def _planner_node(self, state: TripPlannerState) -> dict:
         request = state["request"]
 
@@ -300,17 +341,8 @@ class LangGraphTripPlanner:
 - 住宿: {request.accommodation}
 - 偏好: {', '.join(request.preferences) if request.preferences else '无'}
 
-**RAG知识库召回内容:**
-{state["rag_context"] or "未召回相关知识片段，请主要参考工具结果。"}
-
-**景点信息:**
-{state["attraction_results"]}
-
-**天气信息:**
-{state["weather_results"]}
-
-**酒店信息:**
-{state["hotel_results"]}
+**可用上下文:**
+{state["planner_context"]}
 
 **要求:**
 1. 每天安排2-3个景点
@@ -324,7 +356,7 @@ class LangGraphTripPlanner:
         if request.free_text_input:
             query += f"\n\n**用户补充信息:** {request.free_text_input}"
         
-        print(f"🗺️  节点4-规划行程: {query[:200]}...")
+        print(f"🗺️  节点5-规划行程: {query[:200]}...")
 
         response=await self._planner_chain.ainvoke({
             "query": query
@@ -332,80 +364,108 @@ class LangGraphTripPlanner:
 
         response_text=response.content
         try:
-            trip_plan=self._parse_response(response_text,request)
+            trip_plan=self._parse_response(response_text)
             return {"trip_plan": trip_plan.model_dump()}
         except Exception as e:
-            print(f"⚠️  规划解析失败: {e}，使用fallback")
-            fallback = self._create_fallback_plan(request)
-            return {"trip_plan": fallback.model_dump()}
+            print(f"⚠️  规划解析失败: {e}")
+            return {"trip_plan": None, "validation_errors": [f"规划JSON解析失败: {e}"]}
+
+    async def _validator_node(self, state: TripPlannerState) -> dict:
+        """节点6: 用schema和业务规则校验Planner输出。"""
+        errors = self._validate_plan(state.get("trip_plan"), state["request"])
+        if errors:
+            print(f"🔎 节点6-行程校验未通过: {errors}")
+        else:
+            print("🔎 节点6-行程校验通过")
+        return {"validation_errors": errors}
+
+    async def _repair_node(self, state: TripPlannerState) -> dict:
+        """节点7: 只修复一次结构和缺失字段。"""
+        request = state["request"]
+        print("🛠️  节点7-修复行程JSON")
+        query = f"""下面的旅行计划没有通过校验，请只修复JSON，不要输出解释。
+
+**校验错误:**
+{json.dumps(state["validation_errors"], ensure_ascii=False)}
+
+**原旅行计划:**
+{json.dumps(state["trip_plan"], ensure_ascii=False)}
+
+**可用上下文:**
+{state["planner_context"]}
+
+请返回符合要求的{request.city}{request.travel_days}天旅行计划JSON。"""
+        response = await self._planner_chain.ainvoke({"query": query})
+        trip_plan = self._parse_response(response.content)
+        return {"trip_plan": trip_plan.model_dump(), "repair_attempted": True}
+
+    def _route_after_validation(self, state: TripPlannerState) -> str:
+        if state.get("validation_errors") and not state.get("repair_attempted"):
+            return "repair"
+        return "end"
     # ============ 辅助方法(沿用原有逻辑) ============
 
-    def _parse_response(self, response: str, request: TripRequest) -> TripPlan:
+    def _trim(self, text: str, limit: int) -> str:
+        text = (text or "").strip()
+        return text if len(text) <= limit else text[:limit] + "\n...(已裁剪)"
+
+    def _validate_plan(self, plan: Optional[dict], request: TripRequest) -> list[str]:
+        if not plan:
+            return ["未生成trip_plan"]
+
         try:
-            if "```json" in response:
-                json_start = response.find("```json") + 7
-                json_end = response.find("```", json_start)
-                json_str = response[json_start:json_end].strip()
-            elif "```" in response:
-                json_start = response.find("```") + 3
-                json_end = response.find("```", json_start)
-                json_str = response[json_start:json_end].strip()
-            elif "{" in response and "}" in response:
-                json_start = response.find("{")
-                json_end = response.rfind("}") + 1
-                json_str = response[json_start:json_end]
-            else:
-                raise ValueError("响应中未找到JSON数据")
-
-            data = json.loads(json_str)
-            return TripPlan(**data)
-
+            trip_plan = TripPlan(**plan)
         except Exception as e:
-            print(f"⚠️  解析响应失败: {str(e)}")
-            return self._create_fallback_plan(request)
+            return [f"TripPlan schema不合法: {e}"]
 
-    def _create_fallback_plan(self, request: TripRequest) -> TripPlan:
-        from datetime import datetime, timedelta
+        errors: list[str] = []
+        if trip_plan.city != request.city:
+            errors.append("城市与用户请求不一致")
+        if len(trip_plan.days) != request.travel_days:
+            errors.append("行程天数与用户请求不一致")
 
-        start_date = datetime.strptime(request.start_date, "%Y-%m-%d")
+        for day in trip_plan.days:
+            if not 2 <= len(day.attractions) <= 3:
+                errors.append(f"第{day.day_index + 1}天景点数量应为2-3个")
+            meal_types = {meal.type for meal in day.meals}
+            if not {"breakfast", "lunch", "dinner"}.issubset(meal_types):
+                errors.append(f"第{day.day_index + 1}天缺少早中晚三餐")
+            for attraction in day.attractions:
+                location = attraction.location
+                if location.longitude == 0 or location.latitude == 0:
+                    errors.append(f"{attraction.name}缺少有效坐标")
 
-        days = []
-        for i in range(request.travel_days):
-            current_date = start_date + timedelta(days=i)
-
-            day_plan = DayPlan(
-                date=current_date.strftime("%Y-%m-%d"),
-                day_index=i,
-                description=f"第{i+1}天行程",
-                transportation=request.transportation,
-                accommodation=request.accommodation,
-                attractions=[
-                    Attraction(
-                        name=f"{request.city}景点{j+1}",
-                        address=f"{request.city}市",
-                        location=Location(longitude=116.4 + i*0.01 + j*0.005, latitude=39.9 + i*0.01 + j*0.005),
-                        visit_duration=120,
-                        description=f"这是{request.city}的著名景点",
-                        category="景点"
-                    )
-                    for j in range(2)
-                ],
-                meals=[
-                    Meal(type="breakfast", name=f"第{i+1}天早餐", description="当地特色早餐"),
-                    Meal(type="lunch", name=f"第{i+1}天午餐", description="午餐推荐"),
-                    Meal(type="dinner", name=f"第{i+1}天晚餐", description="晚餐推荐")
-                ]
+        if trip_plan.budget:
+            budget = trip_plan.budget
+            subtotal = (
+                budget.total_attractions
+                + budget.total_hotels
+                + budget.total_meals
+                + budget.total_transportation
             )
-            days.append(day_plan)
+            if budget.total != subtotal:
+                errors.append("预算总额与分项加总不一致")
 
-        return TripPlan(
-            city=request.city,
-            start_date=request.start_date,
-            end_date=request.end_date,
-            days=days,
-            weather_info=[],
-            overall_suggestions=f"这是为您规划的{request.city}{request.travel_days}日游行程,建议提前查看各景点的开放时间。"
-        )
+        return errors
+
+    def _parse_response(self, response: str) -> TripPlan:
+        if "```json" in response:
+            json_start = response.find("```json") + 7
+            json_end = response.find("```", json_start)
+            json_str = response[json_start:json_end].strip()
+        elif "```" in response:
+            json_start = response.find("```") + 3
+            json_end = response.find("```", json_start)
+            json_str = response[json_start:json_end].strip()
+        elif "{" in response and "}" in response:
+            json_start = response.find("{")
+            json_end = response.rfind("}") + 1
+            json_str = response[json_start:json_end]
+        else:
+            raise ValueError("响应中未找到JSON数据")
+
+        data = json.loads(json_str)
+        return TripPlan(**data)
 
 async def get_trip_planner_agent() -> LangGraphTripPlanner:
     global _planner_instance

@@ -3,7 +3,7 @@ set -e
 
 # ============================================================
 # 旅行规划助手 - 一键部署脚本
-# 目标服务器: OpenCloudOS 9 / 2核2GB / IP: your-server-ip
+# 目标服务器: OpenCloudOS 9 / 2核2GB / 域名: your-domain.example
 # ============================================================
 
 APP_DIR="/opt/trip-planner"
@@ -56,7 +56,7 @@ HOST=127.0.0.1
 PORT=8000
 
 # CORS（通过 Nginx 代理后前端同源，但保留以防直接调用）
-CORS_ORIGINS=http://your-server-ip,http://localhost:5173
+CORS_ORIGINS=http://your-domain.example,http://localhost:5173
 
 # 高德地图 API
 AMAP_API_KEY=你的高德API_Key
@@ -119,8 +119,8 @@ echo "=========================================="
 echo "  部署完成！"
 echo "=========================================="
 echo ""
-echo "  访问地址: http://your-server-ip"
-echo "  API 文档: http://your-server-ip/docs"
+echo "  访问地址: http://your-domain.example"
+echo "  API 文档: http://your-domain.example/docs"
 echo ""
 echo "  后续操作:"
 echo "  1. 编辑 ${APP_DIR}/backend/.env 填入 API Key"
