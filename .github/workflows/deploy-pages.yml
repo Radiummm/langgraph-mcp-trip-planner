@@ -38,7 +38,7 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          VITE_BASE_PATH: /helloagents-trip-planner/
+          VITE_BASE_PATH: /langgraph-mcp-trip-planner/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
@@ -55,4 +55,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
