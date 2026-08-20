@@ -38,6 +38,7 @@ Thumbs.db
 
 # Local screenshots / generated previews
 *.png
+!docs/*.png
 *.jpg
 *.jpeg
 *.gif
